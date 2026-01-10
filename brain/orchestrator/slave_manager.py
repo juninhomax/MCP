@@ -96,6 +96,68 @@ class SlaveManager:
                 "error": f"Communication error: {str(e)}"
             }
     
+    async def get_slave_tools(self, slave_type: str) -> list[dict]:
+        """Récupère la liste des outils disponibles depuis un Slave"""
+        slave = self.get_slave_by_type(slave_type)
+        if not slave:
+            return []
+        
+        request = JSONRPCRequest(
+            method="list_tools",
+            params={},
+            id=f"brain_list_tools_{slave_type}"
+        )
+        
+        try:
+            client = await self._get_client()
+            response = await client.post(
+                f"{slave.endpoint}/jsonrpc",
+                json=request.model_dump(),
+                timeout=10.0
+            )
+            response.raise_for_status()
+            
+            rpc_response = JSONRPCResponse(**response.json())
+            
+            if rpc_response.error:
+                logger.error(
+                    "slave_list_tools_error",
+                    slave_id=slave.slave_id,
+                    error=rpc_response.error.message
+                )
+                return []
+            
+            return rpc_response.result.get("tools", [])
+            
+        except Exception as e:
+            logger.error(
+                "slave_list_tools_communication_error",
+                slave_id=slave.slave_id,
+                error=str(e)
+            )
+            return []
+    
+    def find_tool_name(self, slave_type: str, generic_name: str, available_tools: list[dict]) -> Optional[str]:
+        """
+        Trouve le nom réel d'un outil à partir d'un nom générique.
+        Ex: "PowerShell" -> "powershell_exec"
+        """
+        generic_lower = generic_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+        
+        for tool in available_tools:
+            tool_name = tool.get("name", "")
+            tool_name_normalized = tool_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+            
+            # Correspondance exacte normalisée
+            if generic_lower == tool_name_normalized:
+                return tool_name
+            
+            # Correspondance partielle (le nom générique est contenu dans le nom de l'outil)
+            if generic_lower in tool_name_normalized or tool_name_normalized in generic_lower:
+                return tool_name
+        
+        return None
+    
     async def health_check(self, slave_id: str) -> bool:
         slave = self.slaves.get(slave_id)
         if not slave:

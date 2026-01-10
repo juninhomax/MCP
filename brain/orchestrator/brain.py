@@ -119,18 +119,41 @@ class MCPBrain:
         results = []
         
         for idx, step in enumerate(task.execution_plan.steps):
+            slave_type = step.get("slave_type")
+            tool_name = step.get("tool")
+            
             logger.info(
                 "executing_step",
                 task_id=task.task_id,
                 step_index=idx,
-                slave_type=step.get("slave_type"),
-                tool=step.get("tool")
+                slave_type=slave_type,
+                tool=tool_name
             )
             
             try:
+                # Récupérer les outils disponibles depuis le Slave
+                available_tools = await self.slave_manager.get_slave_tools(slave_type)
+                
+                # Trouver le nom réel de l'outil
+                real_tool_name = self.slave_manager.find_tool_name(slave_type, tool_name, available_tools)
+                
+                if not real_tool_name:
+                    logger.warning(
+                        "tool_mapping_failed",
+                        requested_tool=tool_name,
+                        available_tools=[t.get("name") for t in available_tools]
+                    )
+                    real_tool_name = tool_name  # Utiliser le nom original si pas de mapping trouvé
+                else:
+                    logger.info(
+                        "tool_mapped",
+                        requested_tool=tool_name,
+                        real_tool=real_tool_name
+                    )
+                
                 result = await self.slave_manager.execute_tool(
-                    slave_type=step.get("slave_type"),
-                    tool_name=step.get("tool"),
+                    slave_type=slave_type,
+                    tool_name=real_tool_name,
                     parameters=step.get("parameters", {}),
                     dry_run=task.execution_plan.dry_run
                 )
@@ -144,7 +167,7 @@ class MCPBrain:
                 
                 reasoning_step = ReasoningStep(
                     thought=step.get("justification", ""),
-                    action=f"{step.get('slave_type')}.{step.get('tool')}",
+                    action=f"{slave_type}.{real_tool_name}",
                     observation=json.dumps(result)
                 )
                 task.reasoning_steps.append(reasoning_step)
