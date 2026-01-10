@@ -1,0 +1,26 @@
+# Use Windows Server Core with Python
+FROM python:3.11-windowsservercore
+
+LABEL maintainer="MCP Slave Team"
+LABEL description="MCP Slave Windows - Execution Agent"
+
+WORKDIR C:\\app
+
+# Copy requirements
+COPY slaves/windows/requirements.txt .\\slaves\\windows\\
+COPY shared/ .\\shared\\
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r slaves\\windows\\requirements.txt
+
+# Copy application code
+COPY slaves/windows/ .\\slaves\\windows\\
+
+WORKDIR C:\\app\\slaves\\windows
+
+EXPOSE 8002
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD powershell -Command "try { Invoke-WebRequest -Uri http://localhost:8002/health -UseBasicParsing } catch { exit 1 }"
+
+CMD ["python", "main.py"]

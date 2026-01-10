@@ -1,0 +1,36 @@
+FROM python:3.11-slim
+
+LABEL maintainer="MCP Brain Team"
+LABEL description="MCP Brain - Distributed AI Infrastructure Orchestrator"
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY brain/requirements.txt ./brain/
+COPY shared/ ./shared/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r brain/requirements.txt
+
+# Copy application code
+COPY brain/ ./brain/
+
+# Create non-root user
+RUN useradd -m -u 1000 mcpbrain && \
+    chown -R mcpbrain:mcpbrain /app
+
+USER mcpbrain
+
+WORKDIR /app/brain
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["python", "main.py"]
