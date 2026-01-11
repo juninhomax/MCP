@@ -2,7 +2,7 @@
 # A executer sur le serveur distant Windows 10
 
 param(
-    [string]$BrainUrl = "http://VOTRE_IP_BRAIN:8000",
+    [string]$BrainUrl = "",
     [string]$SlaveId = "windows-remote-01",
     [string]$SlavePort = "8003"
 )
@@ -63,6 +63,13 @@ Write-Host "Dependances installees" -ForegroundColor Green
 # 6. Creer le fichier de configuration
 Write-Host ""
 Write-Host "[6/6] Configuration du Slave..." -ForegroundColor Yellow
+
+# Demander l'IP du Brain si non fournie
+if ([string]::IsNullOrEmpty($BrainUrl)) {
+    Write-Host "Entrez l'adresse IP du Brain (ex: 192.168.0.10):" -ForegroundColor Yellow
+    $brainIp = Read-Host
+    $BrainUrl = "http://${brainIp}:8000"
+}
 
 $configContent = @"
 # Configuration du Slave Windows distant

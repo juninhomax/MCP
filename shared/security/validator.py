@@ -42,10 +42,18 @@ class CommandValidator:
     
     def is_allowed(self, command: str, platform: str = "linux") -> tuple[bool, Optional[str]]:
         if self.allowlist:
-            for allowed in self.allowlist:
-                if command.startswith(allowed):
-                    return True, None
-            return False, "Command not in allowlist"
+            # Pour PowerShell, verifier si au moins une cmdlet autorisee est presente
+            if platform == "windows":
+                for allowed in self.allowlist:
+                    if allowed in command:
+                        return True, None
+                return False, "Command not in allowlist"
+            else:
+                # Pour Linux, verification stricte du debut
+                for allowed in self.allowlist:
+                    if command.startswith(allowed):
+                        return True, None
+                return False, "Command not in allowlist"
         
         base_commands = (
             self.ALLOWED_COMMANDS_LINUX if platform == "linux" 
