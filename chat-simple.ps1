@@ -69,16 +69,16 @@ while ($true) {
         Write-Host "Plan d'execution:" -ForegroundColor Cyan
         $stepNum = 1
         foreach ($step in $dryRunStatus.execution_plan.steps) {
-            $slaveInfo = if ($step.slave_id) { " (Slave: $($step.slave_id))" } else { "" }
-            $toolName = if ($step.tool_name) { $step.tool_name } elseif ($step.tool) { $step.tool } else { "Unknown" }
-            Write-Host "  [$stepNum] $toolName$slaveInfo" -ForegroundColor Yellow
-            if ($step.description) {
-                Write-Host "      -> $($step.description)" -ForegroundColor Gray
+            $slaveType = if ($step.slave_type) { " (Slave: $($step.slave_type))" } else { "" }
+            $toolName = if ($step.tool) { $step.tool } elseif ($step.tool_name) { $step.tool_name } else { "Unknown" }
+            Write-Host "  [$stepNum] $toolName$slaveType" -ForegroundColor Yellow
+            if ($step.justification) {
+                Write-Host "      -> $($step.justification)" -ForegroundColor Gray
             }
-            if ($step.arguments) {
-                Write-Host "      Arguments:" -ForegroundColor DarkGray
-                # Afficher les arguments de maniere lisible
-                $stepArgs = $step.arguments
+            if ($step.parameters) {
+                Write-Host "      Parametres:" -ForegroundColor DarkGray
+                # Afficher les parametres de maniere lisible
+                $stepArgs = $step.parameters
                 if ($stepArgs -is [string]) {
                     try {
                         $stepArgs = $stepArgs | ConvertFrom-Json
