@@ -49,6 +49,22 @@ while ($true) {
     
     $dryRunStatus = Invoke-RestMethod -Uri "$BrainUrl/api/v1/tasks/$dryRunTaskId" -Headers $headers
     
+    # Afficher les metriques LLM de l'analyse
+    if ($dryRunStatus.metadata.llm_metrics_analysis) {
+        $metrics = $dryRunStatus.metadata.llm_metrics_analysis
+        Write-Host ""
+        Write-Host "Performance LLM (Analyse):" -ForegroundColor DarkCyan
+        if ($metrics.tokens_per_second) {
+            Write-Host "  Vitesse: $([math]::Round($metrics.tokens_per_second, 2)) tokens/sec" -ForegroundColor Cyan
+        }
+        if ($metrics.tokens_generated) {
+            Write-Host "  Tokens generes: $($metrics.tokens_generated)" -ForegroundColor DarkGray
+        }
+        if ($metrics.generation_time) {
+            Write-Host "  Temps: $([math]::Round($metrics.generation_time, 2))s" -ForegroundColor DarkGray
+        }
+    }
+    
     # Afficher le raisonnement du LLM
     if ($dryRunStatus.reasoning_steps -and $dryRunStatus.reasoning_steps.Count -gt 0) {
         Write-Host ""
@@ -105,6 +121,22 @@ while ($true) {
     } else {
         Write-Host ""
         Write-Host "Plan d'execution: (generation en cours...)" -ForegroundColor Gray
+    }
+    
+    # Afficher les metriques LLM de la planification
+    if ($dryRunStatus.metadata.llm_metrics_planning) {
+        $metrics = $dryRunStatus.metadata.llm_metrics_planning
+        Write-Host ""
+        Write-Host "Performance LLM (Planification):" -ForegroundColor DarkCyan
+        if ($metrics.tokens_per_second) {
+            Write-Host "  Vitesse: $([math]::Round($metrics.tokens_per_second, 2)) tokens/sec" -ForegroundColor Cyan
+        }
+        if ($metrics.tokens_generated) {
+            Write-Host "  Tokens generes: $($metrics.tokens_generated)" -ForegroundColor DarkGray
+        }
+        if ($metrics.generation_time) {
+            Write-Host "  Temps: $([math]::Round($metrics.generation_time, 2))s" -ForegroundColor DarkGray
+        }
     }
     
     Write-Host ""

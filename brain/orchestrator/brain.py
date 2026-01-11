@@ -48,7 +48,7 @@ class MCPBrain:
     async def _analyze_request(self, task: Task):
         prompt = ANALYSIS_PROMPT_TEMPLATE.format(user_request=task.user_request)
         
-        response = await self.llm.generate(
+        llm_response = await self.llm.generate(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT,
             temperature=settings.llm_temperature,
@@ -56,8 +56,12 @@ class MCPBrain:
             json_mode=True
         )
         
+        # Stocker les metriques LLM dans le task
+        if llm_response.metrics:
+            task.metadata["llm_metrics_analysis"] = llm_response.metrics
+        
         try:
-            analysis = json.loads(response)
+            analysis = json.loads(llm_response.content)
             
             for idx, reasoning in enumerate(analysis.get("reasoning", [])):
                 step = ReasoningStep(
@@ -71,17 +75,18 @@ class MCPBrain:
             logger.info(
                 "analysis_completed",
                 task_id=task.task_id,
-                steps=len(task.reasoning_steps)
+                steps=len(task.reasoning_steps),
+                tokens_per_second=llm_response.metrics.get("tokens_per_second")
             )
             
         except json.JSONDecodeError as e:
-            logger.error("invalid_json_response", error=str(e), response=response)
+            logger.error("invalid_json_response", error=str(e), response=llm_response.content)
             raise ValueError(f"LLM returned invalid JSON: {e}")
     
     async def _create_execution_plan(self, task: Task, dry_run: bool = False):
         prompt = ANALYSIS_PROMPT_TEMPLATE.format(user_request=task.user_request)
         
-        response = await self.llm.generate(
+        llm_response = await self.llm.generate(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT,
             temperature=settings.llm_temperature,
@@ -89,8 +94,12 @@ class MCPBrain:
             json_mode=True
         )
         
+        # Stocker les metriques LLM dans le task
+        if llm_response.metrics:
+            task.metadata["llm_metrics_planning"] = llm_response.metrics
+        
         try:
-            plan_data = json.loads(response)
+            plan_data = json.loads(llm_response.content)
             plan_info = plan_data.get("plan", {})
             
             task.execution_plan = ExecutionPlan(
@@ -105,11 +114,12 @@ class MCPBrain:
                 task_id=task.task_id,
                 plan_id=task.execution_plan.plan_id,
                 steps=len(task.execution_plan.steps),
-                dry_run=dry_run
+                dry_run=dry_run,
+                tokens_per_second=llm_response.metrics.get("tokens_per_second")
             )
             
         except json.JSONDecodeError as e:
-            logger.error("invalid_plan_json", error=str(e), response=response)
+            logger.error("invalid_plan_json", error=str(e), response=llm_response.content)
             raise ValueError(f"Failed to parse execution plan: {e}")
     
     async def _execute_plan(self, task: Task):

@@ -1,8 +1,17 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 import json
 import httpx
 from brain.config import settings
+
+
+class LLMResponse:
+    def __init__(self, content: str, metrics: Optional[Dict[str, Any]] = None):
+        self.content = content
+        self.metrics = metrics or {}
+    
+    def __str__(self):
+        return self.content
 
 
 class LLMProvider(ABC):
@@ -14,7 +23,7 @@ class LLMProvider(ABC):
         temperature: float = 0.1,
         max_tokens: int = 4096,
         json_mode: bool = False
-    ) -> str:
+    ) -> LLMResponse:
         pass
 
 
@@ -56,7 +65,30 @@ class OllamaProvider(LLMProvider):
             )
             response.raise_for_status()
             result = response.json()
-            return result["message"]["content"]
+            
+            # Extraire les metriques de performance d'Ollama
+            metrics = {}
+            if "eval_count" in result:
+                metrics["tokens_generated"] = result.get("eval_count", 0)
+            if "eval_duration" in result:
+                # Convertir nanosecondes en secondes
+                duration_sec = result.get("eval_duration", 0) / 1_000_000_000
+                metrics["generation_time"] = duration_sec
+                if metrics.get("tokens_generated", 0) > 0 and duration_sec > 0:
+                    metrics["tokens_per_second"] = metrics["tokens_generated"] / duration_sec
+            if "prompt_eval_count" in result:
+                metrics["tokens_prompt"] = result.get("prompt_eval_count", 0)
+            if "prompt_eval_duration" in result:
+                metrics["prompt_time"] = result.get("prompt_eval_duration", 0) / 1_000_000_000
+            
+            # Temps total
+            if "total_duration" in result:
+                metrics["total_time"] = result.get("total_duration", 0) / 1_000_000_000
+            
+            return LLMResponse(
+                content=result["message"]["content"],
+                metrics=metrics
+            )
 
 
 class GLM4Provider(LLMProvider):
@@ -98,7 +130,19 @@ class GLM4Provider(LLMProvider):
             )
             response.raise_for_status()
             result = response.json()
-            return result["choices"][0]["message"]["content"]
+            
+            # GLM4 peut aussi retourner des metriques usage
+            metrics = {}
+            if "usage" in result:
+                usage = result["usage"]
+                metrics["tokens_prompt"] = usage.get("prompt_tokens", 0)
+                metrics["tokens_generated"] = usage.get("completion_tokens", 0)
+                metrics["tokens_total"] = usage.get("total_tokens", 0)
+            
+            return LLMResponse(
+                content=result["choices"][0]["message"]["content"],
+                metrics=metrics
+            )
 
 
 def get_llm_provider() -> LLMProvider:
