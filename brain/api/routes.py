@@ -130,3 +130,27 @@ async def generate_token(slave_id: str, scopes: list[str] = None):
 @router.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "mcp-brain"}
+
+
+@router.get("/memory/statistics")
+async def get_memory_statistics(token_info: TokenInfo = Depends(verify_token)):
+    stats = brain.context_manager.get_statistics()
+    return stats
+
+
+@router.get("/memory/history")
+async def get_task_history(
+    limit: int = 10,
+    token_info: TokenInfo = Depends(verify_token)
+):
+    recent_tasks = brain.context_manager.task_history.get_recent_tasks(limit)
+    return {"tasks": recent_tasks, "count": len(recent_tasks)}
+
+
+@router.get("/memory/errors")
+async def get_error_patterns(
+    limit: int = 10,
+    token_info: TokenInfo = Depends(verify_token)
+):
+    top_errors = brain.context_manager.error_patterns.get_top_errors(limit)
+    return {"error_patterns": top_errors, "count": len(top_errors)}

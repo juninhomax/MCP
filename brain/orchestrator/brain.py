@@ -5,6 +5,8 @@ from brain.llm.provider import LLMProvider, get_llm_provider
 from brain.llm.prompts import SYSTEM_PROMPT, ANALYSIS_PROMPT_TEMPLATE
 from brain.models.task import Task, TaskStatus, ReasoningStep, ExecutionPlan
 from brain.orchestrator.slave_manager import SlaveManager
+from brain.orchestrator.auto_healing_resilient import ResilientAutoHealing
+from brain.memory import ContextManager
 from brain.config import settings
 import structlog
 
@@ -16,6 +18,8 @@ class MCPBrain:
         self.llm: LLMProvider = get_llm_provider()
         self.slave_manager = SlaveManager()
         self.tasks: dict[str, Task] = {}
+        self.context_manager = ContextManager(max_history=100)
+        self.auto_healing = ResilientAutoHealing(self.context_manager, self.llm)
     
     async def process_request(self, user_request: str, dry_run: bool = False) -> Task:
         task = Task(user_request=user_request)
@@ -43,10 +47,23 @@ class MCPBrain:
             task.error = str(e)
         
         task.updated_at = datetime.utcnow()
+        
+        # Sauvegarder la tâche dans l'historique pour apprentissage
+        self.context_manager.add_completed_task(task.model_dump())
+        
         return task
     
     async def _analyze_request(self, task: Task):
-        prompt = ANALYSIS_PROMPT_TEMPLATE.format(user_request=task.user_request)
+        # Récupérer le contexte de l'historique
+        historical_context = self.context_manager.get_context_for_request(task.user_request)
+        
+        # Enrichir le prompt avec le contexte si disponible
+        if historical_context:
+            enriched_request = f"{task.user_request}\n\n{historical_context}"
+        else:
+            enriched_request = task.user_request
+        
+        prompt = ANALYSIS_PROMPT_TEMPLATE.format(user_request=enriched_request)
         
         llm_response = await self.llm.generate(
             prompt=prompt,
@@ -189,6 +206,48 @@ class MCPBrain:
                         step_index=idx,
                         error=result.get("error")
                     )
+                    
+                    # AUTO-HEALING RESILIENT: Retry jusqu'au succès ou max retries
+                    error_message = result.get("error", "")
+                    failed_command = step.get("parameters", {}).get("command", "")
+                    
+                    if error_message and failed_command:
+                        logger.info("attempting_resilient_auto_healing", step=idx)
+                        
+                        success, healed_result, corrected_command = await self.auto_healing.heal_and_retry(
+                            user_request=task.user_request,
+                            failed_command=failed_command,
+                            error_message=error_message,
+                            slave_manager=self.slave_manager,
+                            slave_type=slave_type,
+                            tool_name=real_tool_name,
+                            original_parameters=step.get("parameters", {}),
+                            step_index=idx
+                        )
+                        
+                        if success:
+                            # Remplacer le résultat échoué par le résultat corrigé
+                            results[-1] = {
+                                "step": idx,
+                                "success": True,
+                                "output": healed_result.get("output"),
+                                "error": None,
+                                "auto_healed": True,
+                                "correction_source": "resilient_auto_healing",
+                                "original_error": error_message,
+                                "corrected_command": corrected_command,
+                                "healing_attempts": self.auto_healing.healing_history
+                            }
+                            
+                            logger.info("resilient_auto_healing_success", step=idx)
+                            
+                            # Continuer l'exécution
+                            continue
+                        else:
+                            logger.error("resilient_auto_healing_exhausted", step=idx)
+                            # Ajouter l'historique même en cas d'échec
+                            results[-1]["healing_attempts"] = self.auto_healing.healing_history
+                    
                     break
                     
             except Exception as e:

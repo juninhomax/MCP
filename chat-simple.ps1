@@ -40,80 +40,6 @@ try {
 }
 Write-Host ""
 
-# Fonction pour analyser une erreur avec le LLM
-function Get-ErrorAnalysis {
-    param(
-        [string]$UserRequest,
-        [string]$ExecutedCommand,
-        [string]$ErrorMessage,
-        [hashtable]$Headers
-    )
-    
-    Write-Host ""
-    Write-Host "Analyse de l'erreur par le LLM..." -ForegroundColor Yellow
-    
-    $errorAnalysisPrompt = @"
-ANALYSE D'ERREUR - Aide l'utilisateur a corriger son erreur
-
-Contexte:
-- Demande utilisateur: $UserRequest
-- Commande executee: $ExecutedCommand
-- Erreur rencontree: $ErrorMessage
-
-Ta mission:
-1. Identifier la cause precise de l'erreur
-2. Proposer une solution concrete et actionnable
-3. Si c'est une erreur de chemin/nom, suggerer le chemin/nom correct probable
-4. Fournir la commande corrigee prete a executer
-
-IMPORTANT:
-- Si l'erreur est "PathNotFound" ou "chemin n'existe pas", cherche des chemins similaires ou corrige les fautes de frappe
-- Sois specifique et pratique dans tes suggestions
-- La commande corrigee doit etre differente de celle qui a echoue
-
-Analyse l'erreur et propose une solution.
-"@
-    
-    try {
-        $analysisBody = @{ request = $errorAnalysisPrompt; dry_run = $true } | ConvertTo-Json
-        $analysisResponse = Invoke-RestMethod -Uri "$BrainUrl/api/v1/tasks" -Method Post -Headers $Headers -Body ([System.Text.Encoding]::UTF8.GetBytes($analysisBody))
-        
-        Start-Sleep -Seconds 2
-        $analysisTask = Invoke-RestMethod -Uri "$BrainUrl/api/v1/tasks/$($analysisResponse.task_id)" -Headers $Headers
-        
-        if ($analysisTask.reasoning_steps -and $analysisTask.reasoning_steps.Count -gt 0) {
-            Write-Host ""
-            Write-Host "Analyse de l'erreur:" -ForegroundColor Magenta
-            foreach ($step in $analysisTask.reasoning_steps) {
-                if ($step.thought) {
-                    Write-Host "  - $($step.thought)" -ForegroundColor White
-                }
-            }
-        }
-        
-        # Essayer d'extraire le plan d'execution pour obtenir la suggestion
-        if ($analysisTask.execution_plan -and $analysisTask.execution_plan.steps -and $analysisTask.execution_plan.steps.Count -gt 0) {
-            Write-Host ""
-            Write-Host "Suggestion:" -ForegroundColor Yellow
-            foreach ($planStep in $analysisTask.execution_plan.steps) {
-                if ($planStep.justification) {
-                    Write-Host "  $($planStep.justification)" -ForegroundColor Cyan
-                }
-                if ($planStep.parameters -and $planStep.parameters.command) {
-                    Write-Host ""
-                    Write-Host "Commande corrigee suggeree:" -ForegroundColor Green
-                    Write-Host "  $($planStep.parameters.command)" -ForegroundColor White
-                }
-            }
-        }
-        
-        return $analysisTask
-    } catch {
-        Write-Host "Impossible d'analyser l'erreur avec le LLM" -ForegroundColor DarkGray
-        return $null
-    }
-}
-
 while ($true) {
     Write-Host "Vous> " -NoNewline -ForegroundColor Cyan
     $prompt = Read-Host
@@ -269,29 +195,90 @@ while ($true) {
         foreach ($step in $taskStatus.result.steps) {
             Write-Host ""
             if ($step.success) {
-                Write-Host "[OK] Etape $($step.step + 1) - Succes" -ForegroundColor Green
+                # Verifier si c'est une auto-correction
+                if ($step.auto_healed) {
+                    Write-Host "[OK] Etape $($step.step + 1) - Succes (Auto-corrige)" -ForegroundColor Green
+                    Write-Host ""
+                    Write-Host "=== PROCESSUS D'AUTO-HEALING ===" -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "Erreur initiale:" -ForegroundColor Red
+                    Write-Host "  $($step.original_error.Substring(0, [Math]::Min(150, $step.original_error.Length)))..." -ForegroundColor DarkGray
+                    Write-Host ""
+                    Write-Host "Resolution autonome:" -ForegroundColor Yellow
+                    
+                    # Afficher l'historique des tentatives si disponible
+                    if ($step.healing_attempts -and $step.healing_attempts.Count -gt 0) {
+                        Write-Host "  Nombre de tentatives: $($step.healing_attempts.Count)" -ForegroundColor Cyan
+                        Write-Host ""
+                        foreach ($attempt in $step.healing_attempts) {
+                            Write-Host "  Tentative $($attempt.retry):" -ForegroundColor White
+                            Write-Host "    Commande: $($attempt.attempted_command)" -ForegroundColor DarkGray
+                            if ($attempt.result -eq "success") {
+                                Write-Host "    Resultat: SUCCES" -ForegroundColor Green
+                                if ($attempt.explanation) {
+                                    Write-Host "    Explication: $($attempt.explanation)" -ForegroundColor DarkCyan
+                                }
+                            } elseif ($attempt.result -eq "validation_failed") {
+                                Write-Host "    Resultat: Validation echouee" -ForegroundColor Yellow
+                                Write-Host "    Raison: $($attempt.reason)" -ForegroundColor DarkGray
+                            } else {
+                                Write-Host "    Resultat: $($attempt.result)" -ForegroundColor DarkGray
+                            }
+                            Write-Host ""
+                        }
+                    } else {
+                        Write-Host "  Le systeme a trouve la solution de maniere autonome" -ForegroundColor White
+                        Write-Host ""
+                    }
+                    
+                    Write-Host "Solution finale appliquee:" -ForegroundColor Green
+                    Write-Host "  Commande: $($step.corrected_command)" -ForegroundColor White
+                    Write-Host "  Source: Auto-healing resilient (apprentissage continu)" -ForegroundColor DarkGray
+                    Write-Host ""
+                    Write-Host "=================================" -ForegroundColor Cyan
+                    Write-Host ""
+                } else {
+                    Write-Host "[OK] Etape $($step.step + 1) - Succes" -ForegroundColor Green
+                }
+                
                 if ($step.output) {
                     Write-Host $step.output -ForegroundColor White
                 } else {
                     Write-Host "(Aucune sortie)" -ForegroundColor Gray
                 }
             } else {
-                Write-Host "[ERREUR] Etape $($step.step + 1) - Erreur" -ForegroundColor Red
+                Write-Host "[ERREUR] Etape $($step.step + 1) - Erreur (echec definitif)" -ForegroundColor Red
                 if ($step.error) {
                     Write-Host $step.error -ForegroundColor Red
-                    
-                    # Analyser l'erreur avec le LLM
-                    $executedCommand = ""
-                    if ($step.command) {
-                        $executedCommand = $step.command
-                    } elseif ($taskStatus.execution_plan -and $taskStatus.execution_plan.steps -and $taskStatus.execution_plan.steps[$step.step]) {
-                        $planStep = $taskStatus.execution_plan.steps[$step.step]
-                        if ($planStep.parameters -and $planStep.parameters.command) {
-                            $executedCommand = $planStep.parameters.command
+                }
+                
+                # Afficher l'historique des tentatives d'auto-healing même en cas d'échec
+                if ($step.healing_attempts -and $step.healing_attempts.Count -gt 0) {
+                    Write-Host ""
+                    Write-Host "=== TENTATIVES D'AUTO-HEALING ===" -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "Le systeme a tente de corriger l'erreur automatiquement:" -ForegroundColor White
+                    Write-Host "  Nombre de tentatives: $($step.healing_attempts.Count)" -ForegroundColor Cyan
+                    Write-Host ""
+                    foreach ($attempt in $step.healing_attempts) {
+                        Write-Host "  Tentative $($attempt.retry):" -ForegroundColor White
+                        Write-Host "    Commande: $($attempt.attempted_command)" -ForegroundColor DarkGray
+                        if ($attempt.result -eq "success") {
+                            Write-Host "    Resultat: SUCCES" -ForegroundColor Green
+                        } elseif ($attempt.result -eq "validation_failed") {
+                            Write-Host "    Resultat: Validation echouee" -ForegroundColor Yellow
+                            Write-Host "    Raison: $($attempt.reason)" -ForegroundColor DarkGray
+                        } else {
+                            Write-Host "    Resultat: $($attempt.result)" -ForegroundColor DarkGray
                         }
+                        if ($attempt.error) {
+                            Write-Host "    Erreur: $($attempt.error.Substring(0, [Math]::Min(100, $attempt.error.Length)))..." -ForegroundColor Red
+                        }
+                        Write-Host ""
                     }
-                    
-                    Get-ErrorAnalysis -UserRequest $prompt -ExecutedCommand $executedCommand -ErrorMessage $step.error -Headers $headers | Out-Null
+                    Write-Host "Toutes les tentatives ont echoue. Le systeme n'a pas pu resoudre le probleme." -ForegroundColor Red
+                    Write-Host "=================================" -ForegroundColor Yellow
+                    Write-Host ""
                 }
             }
         }
