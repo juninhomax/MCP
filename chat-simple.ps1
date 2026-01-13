@@ -40,6 +40,80 @@ try {
 }
 Write-Host ""
 
+# Fonction pour analyser une erreur avec le LLM
+function Get-ErrorAnalysis {
+    param(
+        [string]$UserRequest,
+        [string]$ExecutedCommand,
+        [string]$ErrorMessage,
+        [hashtable]$Headers
+    )
+    
+    Write-Host ""
+    Write-Host "Analyse de l'erreur par le LLM..." -ForegroundColor Yellow
+    
+    $errorAnalysisPrompt = @"
+ANALYSE D'ERREUR - Aide l'utilisateur a corriger son erreur
+
+Contexte:
+- Demande utilisateur: $UserRequest
+- Commande executee: $ExecutedCommand
+- Erreur rencontree: $ErrorMessage
+
+Ta mission:
+1. Identifier la cause precise de l'erreur
+2. Proposer une solution concrete et actionnable
+3. Si c'est une erreur de chemin/nom, suggerer le chemin/nom correct probable
+4. Fournir la commande corrigee prete a executer
+
+IMPORTANT:
+- Si l'erreur est "PathNotFound" ou "chemin n'existe pas", cherche des chemins similaires ou corrige les fautes de frappe
+- Sois specifique et pratique dans tes suggestions
+- La commande corrigee doit etre differente de celle qui a echoue
+
+Analyse l'erreur et propose une solution.
+"@
+    
+    try {
+        $analysisBody = @{ request = $errorAnalysisPrompt; dry_run = $true } | ConvertTo-Json
+        $analysisResponse = Invoke-RestMethod -Uri "$BrainUrl/api/v1/tasks" -Method Post -Headers $Headers -Body ([System.Text.Encoding]::UTF8.GetBytes($analysisBody))
+        
+        Start-Sleep -Seconds 2
+        $analysisTask = Invoke-RestMethod -Uri "$BrainUrl/api/v1/tasks/$($analysisResponse.task_id)" -Headers $Headers
+        
+        if ($analysisTask.reasoning_steps -and $analysisTask.reasoning_steps.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Analyse de l'erreur:" -ForegroundColor Magenta
+            foreach ($step in $analysisTask.reasoning_steps) {
+                if ($step.thought) {
+                    Write-Host "  - $($step.thought)" -ForegroundColor White
+                }
+            }
+        }
+        
+        # Essayer d'extraire le plan d'execution pour obtenir la suggestion
+        if ($analysisTask.execution_plan -and $analysisTask.execution_plan.steps -and $analysisTask.execution_plan.steps.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Suggestion:" -ForegroundColor Yellow
+            foreach ($planStep in $analysisTask.execution_plan.steps) {
+                if ($planStep.justification) {
+                    Write-Host "  $($planStep.justification)" -ForegroundColor Cyan
+                }
+                if ($planStep.parameters -and $planStep.parameters.command) {
+                    Write-Host ""
+                    Write-Host "Commande corrigee suggeree:" -ForegroundColor Green
+                    Write-Host "  $($planStep.parameters.command)" -ForegroundColor White
+                }
+            }
+        }
+        
+        return $analysisTask
+    } catch {
+        Write-Host "Impossible d'analyser l'erreur avec le LLM" -ForegroundColor DarkGray
+        return $null
+    }
+}
+
 while ($true) {
     Write-Host "Vous> " -NoNewline -ForegroundColor Cyan
     $prompt = Read-Host
@@ -205,6 +279,19 @@ while ($true) {
                 Write-Host "[ERREUR] Etape $($step.step + 1) - Erreur" -ForegroundColor Red
                 if ($step.error) {
                     Write-Host $step.error -ForegroundColor Red
+                    
+                    # Analyser l'erreur avec le LLM
+                    $executedCommand = ""
+                    if ($step.command) {
+                        $executedCommand = $step.command
+                    } elseif ($taskStatus.execution_plan -and $taskStatus.execution_plan.steps -and $taskStatus.execution_plan.steps[$step.step]) {
+                        $planStep = $taskStatus.execution_plan.steps[$step.step]
+                        if ($planStep.parameters -and $planStep.parameters.command) {
+                            $executedCommand = $planStep.parameters.command
+                        }
+                    }
+                    
+                    Get-ErrorAnalysis -UserRequest $prompt -ExecutedCommand $executedCommand -ErrorMessage $step.error -Headers $headers | Out-Null
                 }
             }
         }
