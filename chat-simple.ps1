@@ -3,8 +3,13 @@ Write-Host "MCP Brain/Slaves - Chat Interactif" -ForegroundColor Cyan
 Write-Host "Tapez 'exit' pour quitter" -ForegroundColor Gray
 Write-Host ""
 
+# Configuration
 $BrainUrl = "http://localhost:8000"
 $SlaveId = "windows-slave-01"
+
+# Configuration du Slave distant (optionnel)
+$RemoteSlaveUrl = "http://192.168.0.109:8003"
+$RemoteSlaveId = "windows-remote-01"
 
 # Generer le token
 Write-Host "Generation du token..." -ForegroundColor Yellow
@@ -12,6 +17,27 @@ $tokenUri = $BrainUrl + "/api/v1/auth/token?slave_id=" + $SlaveId + "&scopes=*"
 $tokenResponse = Invoke-RestMethod -Uri $tokenUri -Method Post
 $token = $tokenResponse.token
 Write-Host "Token genere!" -ForegroundColor Green
+
+# Auto-enregistrement du Slave distant
+Write-Host "Enregistrement du Slave distant..." -ForegroundColor Yellow
+try {
+    $remoteToken = (Invoke-RestMethod -Uri "$BrainUrl/api/v1/auth/token?slave_id=$RemoteSlaveId&scopes=*" -Method Post).token
+    $body = @{
+        slave_id = $RemoteSlaveId
+        slave_type = "windows"
+        endpoint = $RemoteSlaveUrl
+        capabilities = @("powershell", "file_operations", "system_info")
+    } | ConvertTo-Json
+    
+    Invoke-RestMethod -Uri "$BrainUrl/api/v1/slaves/register" -Method Post -Headers @{
+        "Authorization" = "Bearer $remoteToken"
+        "Content-Type" = "application/json"
+    } -Body $body | Out-Null
+    
+    Write-Host "Slave distant enregistre: $RemoteSlaveId" -ForegroundColor Green
+} catch {
+    Write-Host "Avertissement: Impossible d'enregistrer le Slave distant (peut-etre deja enregistre)" -ForegroundColor Yellow
+}
 Write-Host ""
 
 while ($true) {
